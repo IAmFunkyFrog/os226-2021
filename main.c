@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <malloc.h>
+#include <ctype.h>
 
 #define MAX_STRING_LENGTH 1000
 
@@ -22,7 +23,8 @@ int retcode(int argc, char *argv[]) {
 
 enum ExecutionStatus {
     SUCCESS,
-    COMMAND_NOT_FOUND
+    COMMAND_NOT_FOUND,
+    EMPTY_INPUT
 };
 
 typedef struct {
@@ -36,19 +38,30 @@ typedef struct {
 } ExecutedInput;
 
 ParsedInput parseInput(char *str) {
-    size_t spaceCount = 0;
+    size_t wordsCount = 0;
+    int state = 0;
     for(int i = 0; i < strlen(str); i++) {
-        if(str[i] == ' ') spaceCount++;
+        if(state == 0) {
+            if(isblank(str[i]) == 0) {
+                wordsCount++;
+                state = 1;
+            }
+        }
+        else {
+            if(isblank(str[i]) != 0) state = 0;
+        }
     }
-    size_t length = spaceCount + 1;
-    char** atoms = malloc(sizeof(char*) * length);
-    char* atom = strtok(str, " ");
-    for(int i = 0; atom != NULL; i++) {
-        atoms[i] = malloc(sizeof(char) * strlen(atom));
-        strcpy(atoms[i], atom);
-        atom = strtok(NULL, " ");
+    if(wordsCount == 0) return (ParsedInput){.atoms = NULL, .length = 0};
+
+    char** words = malloc(sizeof(char*) * wordsCount);
+    char* savePtr;
+    char* word = __strtok_r(str, " ", &savePtr);
+    for(int i = 0; word != NULL; i++) {
+        words[i] = malloc(sizeof(char) * strlen(word));
+        strcpy(words[i], word);
+        word = __strtok_r(NULL, " ", &savePtr);
     }
-    return (ParsedInput){.atoms = atoms, .length = length};
+    return (ParsedInput){.atoms = words, .length = wordsCount};
 }
 
 CommandPtr getPointOfEntry(char* str) {
@@ -57,30 +70,38 @@ CommandPtr getPointOfEntry(char* str) {
     else return NULL;
 }
 
-ExecutedInput executeInput(ParsedInput input) {
+ExecutedInput executeParsedInput(ParsedInput input) {
+    if(input.length == 0) return (ExecutedInput){.status = EMPTY_INPUT, .returnCode = -1};
+
     CommandPtr command = getPointOfEntry(input.atoms[0]);
     if(command == NULL) return (ExecutedInput){.status = COMMAND_NOT_FOUND, .returnCode = -1};
     else return (ExecutedInput){.status = SUCCESS, .returnCode = command(input.length, input.atoms)};
 }
 
-
+void evaluate(char* input) {
+    ParsedInput parsedInput = parseInput(input);
+    ExecutedInput executedInput = executeParsedInput(parsedInput);
+    switch (executedInput.status) {
+        case SUCCESS:
+            LAST_RETURN_CODE = executedInput.returnCode;
+            break;
+        case COMMAND_NOT_FOUND:
+            fprintf(stderr, "Command not found\n");
+            break;
+        case EMPTY_INPUT:
+            fprintf(stderr, "Empty input\n");
+            break;
+    }
+}
 
 int main(int argc, char *argv[]) {
     char str[MAX_STRING_LENGTH + 1];
     while (fgets(str, MAX_STRING_LENGTH, stdin)) {
-        char* input = strtok(str, ";");
+        char* savePtr;
+        char* input = __strtok_r(str, "\n;", &savePtr);
         while (input != NULL) {
-            ParsedInput parsedInput = parseInput(input);
-            ExecutedInput executedInput = executeInput(parsedInput);
-            switch (executedInput.status) {
-                case SUCCESS:
-                    LAST_RETURN_CODE = executedInput.returnCode;
-                    break;
-                case COMMAND_NOT_FOUND:
-                    fprintf(stderr, "Command not found");
-                    break;
-            }
-            input = strtok(NULL, ";");
+            evaluate(input);
+            input = __strtok_r(NULL, "\n;", &savePtr);
         }
     }
     return 0;

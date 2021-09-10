@@ -52,4 +52,8 @@ runtest() {
 	return $r
 }
 
-map runtest "$@"
+if [ "$*" = "" ]; then
+	map runtest $(find test -maxdepth 1 -mindepth 1 -type d -printf '%f\n')
+else
+	map runtest "$@"
+fi

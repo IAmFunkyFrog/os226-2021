@@ -56,12 +56,20 @@ ParsedInput parseInput(char *str) {
     char** words = malloc(sizeof(char*) * wordsCount);
     char* savePtr;
     char* word = __strtok_r(str, " ", &savePtr);
-    for(int i = 0; word != NULL; i++) {
-        words[i] = malloc(sizeof(char) * strlen(word));
+    for(int i = 0; word != NULL && i < wordsCount; i++) {
+        words[i] = malloc(sizeof(char) * (strlen(word) + 1));
         strcpy(words[i], word);
         word = __strtok_r(NULL, " ", &savePtr);
     }
     return (ParsedInput){.atoms = words, .length = wordsCount};
+}
+
+void freeParsedInput(ParsedInput* parsedInput) {
+    if(parsedInput == NULL) return;
+    if(parsedInput->atoms == NULL) return;
+
+    for(int i = 0; i < parsedInput->length; i++) free(parsedInput->atoms[i]);
+    free(parsedInput->atoms);
 }
 
 CommandPtr getPointOfEntry(char* str) {
@@ -71,7 +79,7 @@ CommandPtr getPointOfEntry(char* str) {
 }
 
 ExecutedInput executeParsedInput(ParsedInput input) {
-    if(input.length == 0) return (ExecutedInput){.status = EMPTY_INPUT, .returnCode = -1};
+    if(input.length == 0 || input.atoms == NULL) return (ExecutedInput){.status = EMPTY_INPUT, .returnCode = -1};
 
     CommandPtr command = getPointOfEntry(input.atoms[0]);
     if(command == NULL) return (ExecutedInput){.status = COMMAND_NOT_FOUND, .returnCode = -1};
@@ -92,6 +100,7 @@ void evaluate(char* input) {
             fprintf(stderr, "Empty input\n");
             break;
     }
+    freeParsedInput(&parsedInput);
 }
 
 int main(int argc, char *argv[]) {

@@ -28,8 +28,8 @@ enum ExecutionStatus {
 };
 
 typedef struct {
-    char **atoms;
-    size_t length;
+    char **argv;
+    size_t argc;
 } ParsedInput;
 
 typedef struct {
@@ -51,7 +51,7 @@ ParsedInput parseInput(char *str) {
             if(isblank(str[i]) != 0) state = 0;
         }
     }
-    if(wordsCount == 0) return (ParsedInput){.atoms = NULL, .length = 0};
+    if(wordsCount == 0) return (ParsedInput){.argv = NULL, .argc = 0};
 
     char** words = malloc(sizeof(char*) * wordsCount);
     char* savePtr;
@@ -61,15 +61,15 @@ ParsedInput parseInput(char *str) {
         strcpy(words[i], word);
         word = __strtok_r(NULL, " ", &savePtr);
     }
-    return (ParsedInput){.atoms = words, .length = wordsCount};
+    return (ParsedInput){.argv = words, .argc = wordsCount};
 }
 
 void freeParsedInput(ParsedInput* parsedInput) {
     if(parsedInput == NULL) return;
-    if(parsedInput->atoms == NULL) return;
+    if(parsedInput->argv == NULL) return;
 
-    for(int i = 0; i < parsedInput->length; i++) free(parsedInput->atoms[i]);
-    free(parsedInput->atoms);
+    for(int i = 0; i < parsedInput->argc; i++) free(parsedInput->argv[i]);
+    free(parsedInput->argv);
 }
 
 CommandPtr getPointOfEntry(char* str) {
@@ -79,11 +79,11 @@ CommandPtr getPointOfEntry(char* str) {
 }
 
 ExecutedInput executeParsedInput(ParsedInput input) {
-    if(input.length == 0 || input.atoms == NULL) return (ExecutedInput){.status = EMPTY_INPUT, .returnCode = -1};
+    if(input.argc == 0 || input.argv == NULL) return (ExecutedInput){.status = EMPTY_INPUT, .returnCode = -1};
 
-    CommandPtr command = getPointOfEntry(input.atoms[0]);
+    CommandPtr command = getPointOfEntry(input.argv[0]);
     if(command == NULL) return (ExecutedInput){.status = COMMAND_NOT_FOUND, .returnCode = -1};
-    else return (ExecutedInput){.status = SUCCESS, .returnCode = command(input.length, input.atoms)};
+    else return (ExecutedInput){.status = SUCCESS, .returnCode = command(input.argc, input.argv)};
 }
 
 void evaluate(char* input) {

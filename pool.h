@@ -14,11 +14,11 @@ struct pool {
 
 #define POOL_INITIALIZER(_mem, _nmemb, _membsz) (struct pool){ \
 .mem = (_mem), .membsz = (_membsz),                             \
-.freestart = (_mem), .freeend = ((_mem) + ((_nmemb) * (_membsz))), \
+.freestart = (_mem), .freeend = (((void*)(_mem)) + ((_nmemb) * (_membsz))), \
 .free = NULL}
 
 #define POOL_INITIALIZER_ARRAY(_array) \
-	POOL_INITIALIZER(((void*)(_array)), ARRAY_SIZE(_array), sizeof((_array)[0]));
+	POOL_INITIALIZER(_array, ARRAY_SIZE(_array), sizeof((_array)[0]));
 
 void pool_init(struct pool *p, void *mem, unsigned long nmemb, unsigned long membsz);
 

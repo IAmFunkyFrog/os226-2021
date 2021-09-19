@@ -1,7 +1,9 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <malloc.h>
 #include <ctype.h>
+#include "pool.h"
 
 #define MAX_STRING_LENGTH 1000
 
@@ -9,16 +11,54 @@ int LAST_RETURN_CODE = 0;
 
 typedef int (*CommandPtr)(int, char**);
 
-int echo(int argc, char *argv[]) {
+#define APPS_X(X) \
+        X(echo) \
+        X(retcode) \
+        X(pooltest)\
+
+#define DECLARE(X) static int X(int, char *[]);
+APPS_X(DECLARE)
+#undef DECLARE
+
+static const struct command {
+    const char *name;
+    CommandPtr cmd;
+} command_list[] = {
+#define ELEM(X) { # X, X },
+        APPS_X(ELEM)
+#undef ELEM
+};
+
+static int echo(int argc, char *argv[]) {
     for (int i = 1; i < argc; ++i) {
         printf("%s%c", argv[i], i == argc - 1 ? '\n' : ' ');
     }
     return argc - 1;
 }
 
-int retcode(int argc, char *argv[]) {
+static int retcode(int argc, char *argv[]) {
     printf("%d\n", LAST_RETURN_CODE);
     return 0;
+}
+
+static int pooltest(int argc, char *argv[]) {
+    struct obj {
+        void *field1;
+        void *field2;
+    };
+    static struct obj objmem[4];
+    static struct pool objpool = POOL_INITIALIZER_ARRAY(objmem);
+
+    if (!strcmp(argv[1], "alloc")) {
+        struct obj *o = pool_alloc(&objpool);
+        printf("alloc %d\n", o ? (o - objmem) : -1);
+        return 0;
+    } else if (!strcmp(argv[1], "free")) {
+        int iobj = atoi(argv[2]);
+        printf("free %d\n", iobj);
+        pool_free(&objpool, objmem + iobj);
+        return 0;
+    }
 }
 
 enum ExecutionStatus {
@@ -73,9 +113,10 @@ void freeParsedInput(ParsedInput* parsedInput) {
 }
 
 CommandPtr getPointOfEntry(char* str) {
-    if(strcmp(str, "echo") == 0) return echo;
-    else if(strcmp(str, "retcode") == 0) return retcode;
-    else return NULL;
+    for(int i = 0; i < sizeof(command_list) / sizeof(command_list[0]); i++) {
+        if(strcmp(str, command_list[i].name) == 0) return command_list[i].cmd;
+    }
+    return NULL;
 }
 
 ExecutedInput executeParsedInput(ParsedInput input) {

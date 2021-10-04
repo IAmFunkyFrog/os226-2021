@@ -7,6 +7,7 @@
 #include "pool.h"
 
 typedef struct sched_node *(*polling_function)(struct sched_node **);
+typedef int (*cmp_function)(struct sched_node *, struct sched_node*);
 
 struct sched_node {
     void (*entrypoint)(void *aspace);
@@ -101,69 +102,31 @@ void sched_time_elapsed(unsigned amount) {
     }
 }
 
-static struct sched_node *poll_fifo_task(struct sched_node **schedule) {
-    if (*schedule == NULL) {
-        return *schedule;
-    } else if ((*schedule)->next == NULL) {
-        struct sched_node *returned = *schedule;
-        *schedule = NULL;
-        return returned;
-    } else {
-        struct sched_node *returned = schedule_ready;
-        schedule_ready = remove_from_schedule(schedule_ready, schedule_ready);
-        return returned;
-    }
+static int cmp_by_round_robin(struct sched_node *n1, struct sched_node *n2) {
+    return -1;
 }
 
-static struct sched_node *poll_prio_task(struct sched_node **schedule) {
-    if (*schedule == NULL) {
-        return *schedule;
-    } else if ((*schedule)->next == NULL) {
-        struct sched_node *returned = *schedule;
-        *schedule = (*schedule)->next;
-        return returned;
-    } else {
-        int max_priority = (*schedule)->priority;
-        for (struct sched_node *node = *schedule; node != NULL; node = node->next) {
-            if (node->priority > max_priority) max_priority = node->priority;
-        }
-        for (struct sched_node *node = *schedule; node != NULL; node = node->next) {
-            if (node->priority == max_priority) {
-                schedule_ready = remove_from_schedule(schedule_ready, node);
-                return node;
-            }
-        }
-    }
+static int cmp_by_prio(struct sched_node *n1, struct sched_node *n2) {
+    return n2->priority - n1->priority;
 }
 
-static struct sched_node *poll_deadline_task(struct sched_node **schedule) {
-    if (*schedule == NULL) {
-        return *schedule;
-    } else if ((*schedule)->next == NULL) {
-        struct sched_node *returned = *schedule;
-        *schedule = (*schedule)->next;
-        return returned;
-    } else {
-        int nearest_deadline = (*schedule)->deadline;
-        for (struct sched_node *node = *schedule; node != NULL; node = node->next) {
-            if ((node->deadline < nearest_deadline && node->deadline >= 0) || nearest_deadline < 0) nearest_deadline = node->deadline;
-        }
-        int max_priority_with_deadline = INT_MIN;
-        for (struct sched_node *node = *schedule; node != NULL; node = node->next) {
-            if (node->deadline == nearest_deadline && node->priority > max_priority_with_deadline) max_priority_with_deadline = node->priority;
-        }
-        for (struct sched_node *node = *schedule; node != NULL; node = node->next) {
-            if (node->deadline == nearest_deadline && node->priority == max_priority_with_deadline) {
-                schedule_ready = remove_from_schedule(schedule_ready, node);
-                return node;
-            }
-        }
+static int cmp_by_deadline(struct sched_node *n1, struct sched_node *n2) {
+    if(n1->deadline >= 0 && n2->deadline >= 0) {
+        if(n1->deadline != n2->deadline) return n1->deadline - n2->deadline;
+        else return cmp_by_prio(n1, n2);
     }
+    else if(n1->deadline < 0 && n2->deadline < 0) return cmp_by_prio(n1, n2);
+    else if(n1->deadline < 0) return 1;
+    else if(n2->deadline < 0) return -1;
 }
 
-static void sched_run_with_polling_function(polling_function pf) {
+static void sched_run_with_cmp(cmp_function cmp) {
     while (schedule_ready != NULL) {
-        executing_task = pf(&schedule_ready);
+        executing_task = schedule_ready;
+        for(struct sched_node *node = schedule_ready->next; node != NULL; node = node->next) {
+            if(cmp(executing_task, node) > 0) executing_task = node;
+        }
+        schedule_ready = remove_from_schedule(schedule_ready, executing_task);
         executing_task->entrypoint(executing_task->aspace);
         free(executing_task);
         executing_task = NULL;
@@ -173,13 +136,13 @@ static void sched_run_with_polling_function(polling_function pf) {
 void sched_run(enum policy policy) {
     switch (policy) {
         case POLICY_FIFO:
-            sched_run_with_polling_function(poll_fifo_task);
+            sched_run_with_cmp(cmp_by_round_robin);
             break;
         case POLICY_PRIO:
-            sched_run_with_polling_function(poll_prio_task);
+            sched_run_with_cmp(cmp_by_prio);
             break;
         case POLICY_DEADLINE:
-            sched_run_with_polling_function(poll_deadline_task);
+            sched_run_with_cmp(cmp_by_deadline);
             break;
         default:
             fprintf(stderr, "Unknown policy given for sched_run");

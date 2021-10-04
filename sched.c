@@ -6,7 +6,6 @@
 #include "sched.h"
 #include "pool.h"
 
-typedef struct sched_node *(*polling_function)(struct sched_node **);
 typedef int (*cmp_function)(struct sched_node *, struct sched_node*);
 
 struct sched_node {

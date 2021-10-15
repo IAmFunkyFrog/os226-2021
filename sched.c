@@ -1,3 +1,5 @@
+#define _GNU_SOURCE
+
 #include <limits.h>
 #include <string.h>
 #include <stdio.h>
@@ -36,11 +38,17 @@ static struct task taskarray[16];
 static struct pool taskpool = POOL_INITIALIZER_ARRAY(taskarray);
 
 void irq_disable(void) {
-        // TODO: sigprocmask
+    sigset_t set;
+    sigprocmask(SIG_UNBLOCK, NULL, &set);
+    sigaddset(&set, SIGALRM);
+    sigprocmask(SIG_BLOCK, &set, NULL);
 }
 
 void irq_enable(void) {
-        // TODO: sigprocmask
+    sigset_t set;
+    sigemptyset(&set);
+    sigaddset(&set, SIGALRM);
+    sigprocmask(SIG_UNBLOCK, &set, NULL);
 }
 
 static void policy_run(struct task *t) {
@@ -105,7 +113,7 @@ out:
 
 void sched_time_elapsed(unsigned amount) {
 	// TODO
-#if 0
+#if 1
 	int endtime = time + amount; 
 	while (time < endtime) {
 		pause();
@@ -130,11 +138,31 @@ static int deadline_cmp(struct task *t1, struct task *t2) {
 }
 
 static void tick_hnd(void) {
-	// TODO
+    time += 1;
+
+    for(struct task *cur = waitq; cur != NULL && cur->next != NULL; cur = cur->next) {
+        if(cur->next->waketime <= time) {
+            struct task *t = cur->next;
+            cur->next = cur->next->next;
+            policy_run(t);
+        }
+    }
+    if(waitq != NULL && waitq->waketime <= time) {
+        struct task *t = waitq;
+        waitq = waitq->next;
+        policy_run(t);
+    }
 }
 
 long sched_gettime(void) {
-	// TODO: timer_cnt
+	int time_msec1 = time;
+    int time_usec1 = timer_cnt();
+    int time_msec2 = time;
+    int time_usec2 = timer_cnt();
+
+    // to check if was interrupt between time_msec1 and time_usec1 initializing
+    if(time_usec1 <= time_usec2) return time_msec2 + time_usec1 / 1000;
+    else return time_msec2 + time_usec2 / 1000;
 }
 
 void sched_run(enum policy policy) {

@@ -12,7 +12,7 @@
 
 int timer_cnt(void) {
 	struct itimerval curr_value;
-    getitimer(ITIMER_PROF, &curr_value);
+    getitimer(ITIMER_REAL, &curr_value);
     return (curr_value.it_interval.tv_usec + curr_value.it_interval.tv_sec * 1000000) - (curr_value.it_value.tv_usec + curr_value.it_value.tv_sec * 1000000);
 }
 
@@ -28,9 +28,9 @@ void timer_init(int ms, void (*hnd)(void)) {
     struct sigaction act = {
             .sa_handler = hnd
     };
-    if(sigaction(SIGPROF, &act, NULL) != 0) {
+    if(sigaction(SIGALRM, &act, NULL) != 0) {
         fprintf(stderr, "Cannot set sigaction in timer_init()");
         exit(-1);
     }
-    setitimer(ITIMER_PROF, &new_value, NULL);
+    setitimer(ITIMER_REAL, &new_value, NULL);
 }

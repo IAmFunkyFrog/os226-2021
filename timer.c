@@ -13,7 +13,7 @@
 int timer_cnt(void) {
 	struct itimerval curr_value;
     getitimer(ITIMER_PROF, &curr_value);
-    return curr_value.it_value.tv_usec + curr_value.it_value.tv_sec * 1000000;
+    return (curr_value.it_interval.tv_usec + curr_value.it_interval.tv_sec * 1000000) - (curr_value.it_value.tv_usec + curr_value.it_value.tv_sec * 1000000);
 }
 
 void timer_init(int ms, void (*hnd)(void)) {

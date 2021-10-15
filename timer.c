@@ -25,8 +25,11 @@ void timer_init(int ms, void (*hnd)(void)) {
             .it_interval = interval,
             .it_value = interval
     };
-    if(signal(SIGPROF, hnd) == SIG_ERR) {
-        fprintf(stderr, "Unable to set handler on signal in timer_init()");
+    struct sigaction act = {
+            .sa_handler = hnd
+    };
+    if(sigaction(SIGPROF, &act, NULL) != 0) {
+        fprintf(stderr, "Cannot set sigaction in timer_init()");
         exit(-1);
     }
     setitimer(ITIMER_PROF, &new_value, NULL);

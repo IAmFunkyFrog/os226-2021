@@ -37,18 +37,16 @@ static int (*policy_cmp)(struct task *t1, struct task *t2);
 static struct task taskarray[16];
 static struct pool taskpool = POOL_INITIALIZER_ARRAY(taskarray);
 
+static sigset_t blocked_irqs;
+
 void irq_disable(void) {
     sigset_t set;
-    sigprocmask(SIG_UNBLOCK, NULL, &set);
-    sigaddset(&set, SIGALRM);
-    sigprocmask(SIG_BLOCK, &set, NULL);
+    sigfillset(&set);
+    sigprocmask(SIG_SETMASK, &set, &blocked_irqs);
 }
 
 void irq_enable(void) {
-    sigset_t set;
-    sigemptyset(&set);
-    sigaddset(&set, SIGALRM);
-    sigprocmask(SIG_UNBLOCK, &set, NULL);
+    sigprocmask(SIG_SETMASK, &blocked_irqs, NULL);
 }
 
 static void policy_run(struct task *t) {
@@ -110,7 +108,7 @@ void sched_cont(void (*entrypoint)(void *aspace),
 out:
 	irq_enable();
 }
-
+//что тут не так?
 void sched_time_elapsed(unsigned amount) {
 	// TODO
 #if 1

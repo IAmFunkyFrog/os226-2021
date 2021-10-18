@@ -157,7 +157,8 @@ long sched_gettime(void) {
     int time_msec2 = time;
     int time_usec2 = timer_cnt();
 
-    // to check if was interrupt between time_msec1 and time_usec1 initializing
+    // Проверка сделана чтобы учесть ситуацию, когда между засеканием сохраненного времени и времени с таймера происходит исключение
+    // Update: в конкретно нашем случае такая проверка не имеет смысла, так как мы засекаем время с точностью до миллисекунды, а на таймере время всегда меньше миллисекунды
     if(time_usec1 <= time_usec2) return time_msec2 + time_usec1 / 1000;
     else return time_msec2 + time_usec2 / 1000;
 }

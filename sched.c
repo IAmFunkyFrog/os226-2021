@@ -108,15 +108,6 @@ void sched_cont(void (*entrypoint)(void *aspace),
 out:
 	irq_enable();
 }
-//что тут не так?
-void sched_time_elapsed(unsigned amount) {
-    irq_disable();
-    int endtime = time + amount;
-    while (time < endtime) {
-        sigsuspend(&blocked_irqs);
-    }
-    irq_enable();
-}
 
 static int fifo_cmp(struct task *t1, struct task *t2) {
 	return -1;
@@ -149,6 +140,18 @@ static void tick_hnd(void) {
         waitq = waitq->next;
         policy_run(t);
     }
+}
+
+void sched_time_elapsed(unsigned amount) {
+    irq_disable();
+    struct sigaction sig_act;
+    sigaction(TIMER_SIGNAL, NULL, &sig_act);
+    int endtime = time + amount;
+    while (time < endtime && sig_act.sa_handler == tick_hnd) {
+        sigsuspend(&blocked_irqs);
+        sigaction(TIMER_SIGNAL, NULL, &sig_act);
+    }
+    irq_enable();
 }
 
 long sched_gettime(void) {

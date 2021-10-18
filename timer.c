@@ -12,7 +12,10 @@
 
 int timer_cnt(void) {
 	struct itimerval curr_value;
-    getitimer(TIMER_TYPE, &curr_value);
+    if(getitimer(TIMER_TYPE, &curr_value) == -1) {
+        fprintf(stderr, "Error while getting curr_value from getitimer()");
+        return -1;
+    }
     return (curr_value.it_interval.tv_usec + curr_value.it_interval.tv_sec * 1000000) - (curr_value.it_value.tv_usec + curr_value.it_value.tv_sec * 1000000);
 }
 
@@ -32,5 +35,7 @@ void timer_init(int ms, void (*hnd)(void)) {
         fprintf(stderr, "Cannot set sigaction in timer_init()");
         exit(-1);
     }
-    setitimer(TIMER_TYPE, &new_value, NULL);
+    if(setitimer(TIMER_TYPE, &new_value, NULL) == -1) {
+        fprintf(stderr, "Error while setting settimer() on timer");
+    }
 }

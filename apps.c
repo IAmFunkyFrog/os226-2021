@@ -85,7 +85,7 @@ static void app_burn(void *_ctx) {
 	struct app_ctx *ctx = _ctx;
 	while (1)  {
 		print(ctx, "burn");
-		for (volatile int i = 10000000 * ctx->cnt; 0 < i; --i) {
+		for (volatile int i = 100000 * ctx->cnt; 0 < i; --i) {
 		}
 	}
 }

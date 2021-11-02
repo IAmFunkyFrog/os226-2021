@@ -83,6 +83,14 @@ void irq_enable(void) {
 }
 
 static int bitmap_alloc(unsigned long *bitmap, size_t size) {
+    char* start_pointer = (char*) bitmap;
+    char* end_pointer = start_pointer + size;
+    for(char* ptr = start_pointer; ptr < end_pointer; ptr++) {
+        if(*ptr == 0) {
+            (*ptr)++;
+            return ptr - start_pointer;
+        }
+    }
 	return -1;
 }
 
@@ -108,6 +116,16 @@ static void vmctx_make(struct vmctx *vm, size_t stack_size) {
 }
 
 static void vmctx_apply(struct vmctx *vm) {
+    for(int i = 0; i < USER_PAGES; i++) {
+        if(vm->map[i] != -1) {
+            mmap(USER_START + i * PAGE_SIZE,
+                 PAGE_SIZE,
+                 PROT_READ | PROT_WRITE,
+                 MAP_SHARED,
+                 memfd,
+                 vm->map[i]);
+        }
+    }
 }
 
 static void doswitch(void) {

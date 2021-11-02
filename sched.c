@@ -72,7 +72,7 @@ static struct pool taskpool = POOL_INITIALIZER_ARRAY(taskarray);
 static sigset_t irqs;
 
 static int memfd = -1;
-static unsigned long bitmap_pages[MEM_PAGES / sizeof(unsigned long) * CHAR_BIT];
+static unsigned long bitmap_pages[MEM_PAGES / (sizeof(unsigned long) * CHAR_BIT)];
 
 void irq_disable(void) {
 	sigprocmask(SIG_BLOCK, &irqs, NULL);
@@ -83,12 +83,16 @@ void irq_enable(void) {
 }
 
 static int bitmap_alloc(unsigned long *bitmap, size_t size) {
-    char* start_pointer = (char*) bitmap;
-    char* end_pointer = start_pointer + size;
-    for(char* ptr = start_pointer; ptr < end_pointer; ptr++) {
-        if(*ptr == 0) {
-            (*ptr)++;
-            return ptr - start_pointer;
+    int size_of_type = (sizeof(unsigned long) * CHAR_BIT);
+    for(int i = 0; i < size; i++) {
+        int index = i * size_of_type;
+        unsigned long bit = ((unsigned long)1) << (size_of_type - 1);
+        for(int offset = 0; offset < (size_of_type - 1); offset++) {
+            if((bit & bitmap[i]) == 0) {
+                bitmap[i] |= bit;
+                return index + offset;
+            }
+            bit = bit / 2;
         }
     }
 	return -1;

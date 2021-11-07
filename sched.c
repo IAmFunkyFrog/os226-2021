@@ -10,6 +10,7 @@
 #include <elf.h>
 #include <sys/mman.h>
 #include <sys/fcntl.h>
+#include <assert.h>
 
 #include "sched.h"
 #include "timer.h"
@@ -356,6 +357,7 @@ static int vmctx_brk(struct vmctx *vm, void *addr) {
 		bitmap_free(bitmap_pages, sizeof(bitmap_pages), vm->map[i]);
 	}
 	vm->brk = newbrk;
+    printf("Newbrk %d\n", newbrk);
 
 	return 0;
 }
@@ -391,6 +393,49 @@ static int do_exec(const char *path, char *argv[]) {
 		return 1;
 	}
 
+
+    Elf64_Ehdr ehdr;
+    if(read(fd, &ehdr, sizeof(Elf64_Ehdr)) != sizeof(Elf64_Ehdr)) {
+        printf("ELF error while reading elf header\n");
+        return 1;
+    }
+    assert(ehdr.e_type == ET_EXEC);
+
+    char buf[PAGE_SIZE];
+    printf("Entry %x\n", ehdr.e_entry);
+    printf("%d %d\n", ehdr.e_phoff, ehdr.e_phnum);
+    if(ehdr.e_phoff != 0) {
+        for (int i = 0; i < ehdr.e_phnum; i++) {
+            printf("Processing %d\n", i);
+            assert(lseek(fd, ehdr.e_phoff + i * sizeof(Elf64_Phdr), SEEK_SET) != -1);
+            Elf64_Phdr phdr;
+            if (read(fd, &phdr, sizeof(Elf64_Phdr)) != sizeof(Elf64_Phdr)) {
+                printf("ELF error while reading program header\n");
+                return 1;
+            }
+            switch (phdr.p_type) {
+                case PT_LOAD:
+                    printf("Loading %x adress: filesz %d\n", phdr.p_vaddr, phdr.p_filesz);
+                    unsigned int old_brk = current->vm.brk;
+                    vmctx_brk(&current->vm, (void *) (phdr.p_vaddr + phdr.p_memsz));
+                    for(unsigned int i = old_brk; i < current->vm.brk; i++) {
+                        assert(lseek(fd, phdr.p_offset + (i - old_brk) * PAGE_SIZE, SEEK_SET) != -1);
+                        read(fd, buf, phdr.p_filesz);
+                        assert(lseek(memfd, PAGE_SIZE * current->vm.map[current->vm.brk - 1], SEEK_SET) != -1);
+                        write(memfd, buf, phdr.p_filesz);
+                    }
+                default:
+                    printf("This type of phdr (%d) not supported\n", phdr.p_type);
+            }
+        }
+        assert(lseek(memfd, 0, SEEK_SET) != -1);
+        current->main = ehdr.e_entry;
+
+        struct ctx dummy, new;
+        vmctx_apply(&current->vm);
+        ctx_make(&new, exectramp, USER_START + USER_PAGES * PAGE_SIZE);
+        ctx_switch(&dummy, &new);
+    }
 	// https://linux.die.net/man/5/elf
 	//
 	// Find Elf64_Ehdr -- at the very start

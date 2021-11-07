@@ -357,13 +357,12 @@ static int vmctx_brk(struct vmctx *vm, void *addr) {
 		bitmap_free(bitmap_pages, sizeof(bitmap_pages), vm->map[i]);
 	}
 	vm->brk = newbrk;
-    printf("Newbrk %d\n", newbrk);
 
 	return 0;
 }
 
 int vmprotect(void *start, unsigned len, int prot) {
-#if 0
+#if 1
 	if (mprotect(start, len, prot)) {
 		perror("mprotect");
 		return -1;
@@ -377,6 +376,14 @@ static void exectramp(void) {
 	current->main(current->argc, current->argv);
 	irq_disable();
 	doswitch();
+}
+
+static int get_prot(int p_flags) {
+    int prot = 0;
+    if(p_flags & PF_X) prot |= PROT_EXEC;
+    if(p_flags & PF_W) prot |= PROT_WRITE;
+    if(p_flags & PF_R) prot |= PROT_READ;
+    return prot;
 }
 
 static int do_exec(const char *path, char *argv[]) {
@@ -400,13 +407,10 @@ static int do_exec(const char *path, char *argv[]) {
         return 1;
     }
     assert(ehdr.e_type == ET_EXEC);
-
+    int brk_flags[USER_PAGES] = {};
     char buf[PAGE_SIZE];
-    printf("Entry %x\n", ehdr.e_entry);
-    printf("%d %d\n", ehdr.e_phoff, ehdr.e_phnum);
     if(ehdr.e_phoff != 0) {
         for (int i = 0; i < ehdr.e_phnum; i++) {
-            printf("Processing %d\n", i);
             assert(lseek(fd, ehdr.e_phoff + i * sizeof(Elf64_Phdr), SEEK_SET) != -1);
             Elf64_Phdr phdr;
             if (read(fd, &phdr, sizeof(Elf64_Phdr)) != sizeof(Elf64_Phdr)) {
@@ -414,25 +418,32 @@ static int do_exec(const char *path, char *argv[]) {
                 return 1;
             }
             switch (phdr.p_type) {
-                case PT_LOAD:
-                    printf("Loading %x adress: filesz %d\n", phdr.p_vaddr, phdr.p_filesz);
+                case PT_LOAD:;
                     unsigned int old_brk = current->vm.brk;
                     vmctx_brk(&current->vm, (void *) (phdr.p_vaddr + phdr.p_memsz));
-                    for(unsigned int i = old_brk; i < current->vm.brk; i++) {
-                        assert(lseek(fd, phdr.p_offset + (i - old_brk) * PAGE_SIZE, SEEK_SET) != -1);
-                        read(fd, buf, phdr.p_filesz);
-                        assert(lseek(memfd, PAGE_SIZE * current->vm.map[current->vm.brk - 1], SEEK_SET) != -1);
-                        write(memfd, buf, phdr.p_filesz);
+                    int prot = get_prot(phdr.p_flags);
+                    for(unsigned int j = old_brk; j < current->vm.brk - 1; j++) {
+                        brk_flags[j] = prot;
+                        assert(lseek(fd, phdr.p_offset + (j - old_brk) * PAGE_SIZE, SEEK_SET) != -1);
+                        read(fd, buf, PAGE_SIZE);
+                        assert(lseek(memfd, PAGE_SIZE * current->vm.map[j], SEEK_SET) != -1);
+                        write(memfd, buf, PAGE_SIZE);
                     }
-                default:
-                    printf("This type of phdr (%d) not supported\n", phdr.p_type);
+                    brk_flags[current->vm.brk - old_brk - 1] = prot;
+                    assert(lseek(fd, phdr.p_offset + (current->vm.brk - old_brk - 1) * PAGE_SIZE, SEEK_SET) != -1);
+                    read(fd, buf, phdr.p_filesz % PAGE_SIZE);
+                    assert(lseek(memfd, PAGE_SIZE * current->vm.map[current->vm.brk - 1], SEEK_SET) != -1);
+                    write(memfd, buf, phdr.p_filesz % PAGE_SIZE);
+                //default:
+                    //printf("This type of phdr (%d) not supported\n", phdr.p_type);
             }
         }
         assert(lseek(memfd, 0, SEEK_SET) != -1);
-        current->main = ehdr.e_entry;
 
         struct ctx dummy, new;
         vmctx_apply(&current->vm);
+        for(int i = 0; i < current->vm.brk; i++) vmprotect(USER_START, PAGE_SIZE, brk_flags[i]);
+        current->main = ehdr.e_entry;
         ctx_make(&new, exectramp, USER_START + USER_PAGES * PAGE_SIZE);
         ctx_switch(&dummy, &new);
     }

@@ -418,21 +418,24 @@ static int do_exec(const char *path, char *argv[]) {
                 return 1;
             }
             switch (phdr.p_type) {
+                //TODO: разобраться с другими возможными p_type
                 case PT_LOAD:;
                     unsigned int old_brk = current->vm.brk;
-                    vmctx_brk(&current->vm, (void *) (phdr.p_vaddr + phdr.p_memsz));
+                    if(current->vm.brk * PAGE_SIZE <= phdr.p_vaddr + phdr.p_memsz)
+                        vmctx_brk(&current->vm, (void *) (phdr.p_vaddr + phdr.p_memsz));
+
                     int prot = get_prot(phdr.p_flags);
-                    for(unsigned int j = old_brk; j < current->vm.brk - 1; j++) {
-                        brk_flags[j] = prot;
-                        assert(lseek(fd, phdr.p_offset + (j - old_brk) * PAGE_SIZE, SEEK_SET) != -1);
+                    for(unsigned int j = old_brk; j < current->vm.brk; j++) brk_flags[j] = prot;
+
+                    for(int i = 0; i < phdr.p_filesz / PAGE_SIZE; i++) {
+                        assert(lseek(fd, phdr.p_offset + i * PAGE_SIZE, SEEK_SET) != -1);
                         read(fd, buf, PAGE_SIZE);
-                        assert(lseek(memfd, PAGE_SIZE * current->vm.map[j], SEEK_SET) != -1);
+                        assert(lseek(memfd, PAGE_SIZE * current->vm.map[(phdr.p_vaddr - (unsigned long) USER_START) / PAGE_SIZE + i], SEEK_SET) != -1);
                         write(memfd, buf, PAGE_SIZE);
                     }
-                    brk_flags[current->vm.brk - old_brk - 1] = prot;
-                    assert(lseek(fd, phdr.p_offset + (current->vm.brk - old_brk - 1) * PAGE_SIZE, SEEK_SET) != -1);
+                    assert(lseek(fd, phdr.p_offset + (phdr.p_filesz / PAGE_SIZE) * PAGE_SIZE, SEEK_SET) != -1);
                     read(fd, buf, phdr.p_filesz % PAGE_SIZE);
-                    assert(lseek(memfd, PAGE_SIZE * current->vm.map[current->vm.brk - 1], SEEK_SET) != -1);
+                    assert(lseek(memfd, PAGE_SIZE * current->vm.map[(phdr.p_vaddr + phdr.p_filesz - (unsigned long) USER_START) / PAGE_SIZE], SEEK_SET) != -1);
                     write(memfd, buf, phdr.p_filesz % PAGE_SIZE);
                 //default:
                     //printf("This type of phdr (%d) not supported\n", phdr.p_type);

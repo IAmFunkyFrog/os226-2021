@@ -418,10 +418,9 @@ static int do_exec(const char *path, char *argv[]) {
                 return 1;
             }
             switch (phdr.p_type) {
-                //TODO: разобраться с другими возможными p_type
                 case PT_LOAD:;
                     unsigned int old_brk = current->vm.brk;
-                    if(current->vm.brk * PAGE_SIZE <= phdr.p_vaddr + phdr.p_memsz)
+                    if(current->vm.brk * PAGE_SIZE + (unsigned long)USER_START <= phdr.p_vaddr + phdr.p_memsz)
                         vmctx_brk(&current->vm, (void *) (phdr.p_vaddr + phdr.p_memsz));
 
                     int prot = get_prot(phdr.p_flags);
@@ -437,8 +436,6 @@ static int do_exec(const char *path, char *argv[]) {
                     read(fd, buf, phdr.p_filesz % PAGE_SIZE);
                     assert(lseek(memfd, PAGE_SIZE * current->vm.map[(phdr.p_vaddr + phdr.p_filesz - (unsigned long) USER_START) / PAGE_SIZE], SEEK_SET) != -1);
                     write(memfd, buf, phdr.p_filesz % PAGE_SIZE);
-                //default:
-                    //printf("This type of phdr (%d) not supported\n", phdr.p_type);
             }
         }
         assert(lseek(memfd, 0, SEEK_SET) != -1);

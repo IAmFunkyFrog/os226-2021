@@ -406,17 +406,17 @@ static int do_exec(const char *path, char *argv[]) {
         printf("ELF error while reading elf header\n");
         return 1;
     }
-    assert(ehdr.e_type == ET_EXEC);
+    if(ehdr.e_type != ET_EXEC) {
+        printf("ELF format is not a ET_EXEC\n");
+        return 1;
+    }
     int brk_flags[USER_PAGES] = {};
     char buf[PAGE_SIZE];
     if(ehdr.e_phoff != 0) {
         for (int i = 0; i < ehdr.e_phnum; i++) {
-            assert(lseek(fd, ehdr.e_phoff + i * sizeof(Elf64_Phdr), SEEK_SET) != -1);
+            lseek(fd, ehdr.e_phoff + i * sizeof(Elf64_Phdr), SEEK_SET);
             Elf64_Phdr phdr;
-            if (read(fd, &phdr, sizeof(Elf64_Phdr)) != sizeof(Elf64_Phdr)) {
-                printf("ELF error while reading program header\n");
-                return 1;
-            }
+            read(fd, &phdr, sizeof(Elf64_Phdr));
             switch (phdr.p_type) {
                 case PT_LOAD:;
                     unsigned int old_brk = current->vm.brk;
@@ -427,18 +427,18 @@ static int do_exec(const char *path, char *argv[]) {
                     for(unsigned int j = old_brk; j < current->vm.brk; j++) brk_flags[j] = prot;
 
                     for(int i = 0; i < phdr.p_filesz / PAGE_SIZE; i++) {
-                        assert(lseek(fd, phdr.p_offset + i * PAGE_SIZE, SEEK_SET) != -1);
+                        lseek(fd, phdr.p_offset + i * PAGE_SIZE, SEEK_SET);
                         read(fd, buf, PAGE_SIZE);
-                        assert(lseek(memfd, PAGE_SIZE * current->vm.map[(phdr.p_vaddr - (unsigned long) USER_START) / PAGE_SIZE + i], SEEK_SET) != -1);
+                        lseek(memfd, PAGE_SIZE * current->vm.map[(phdr.p_vaddr - (unsigned long) USER_START) / PAGE_SIZE + i], SEEK_SET);
                         write(memfd, buf, PAGE_SIZE);
                     }
-                    assert(lseek(fd, phdr.p_offset + (phdr.p_filesz / PAGE_SIZE) * PAGE_SIZE, SEEK_SET) != -1);
+                    lseek(fd, phdr.p_offset + (phdr.p_filesz / PAGE_SIZE) * PAGE_SIZE, SEEK_SET);
                     read(fd, buf, phdr.p_filesz % PAGE_SIZE);
-                    assert(lseek(memfd, PAGE_SIZE * current->vm.map[(phdr.p_vaddr + phdr.p_filesz - (unsigned long) USER_START) / PAGE_SIZE], SEEK_SET) != -1);
+                    lseek(memfd, PAGE_SIZE * current->vm.map[(phdr.p_vaddr + phdr.p_filesz - (unsigned long) USER_START) / PAGE_SIZE], SEEK_SET);
                     write(memfd, buf, phdr.p_filesz % PAGE_SIZE);
             }
         }
-        assert(lseek(memfd, 0, SEEK_SET) != -1);
+        lseek(memfd, 0, SEEK_SET);
 
         struct ctx dummy, new;
         vmctx_apply(&current->vm);

@@ -399,8 +399,8 @@ static void exectramp(void) {
 }
 
 static int do_exec(const char *path, char *argv[]) {
-	char elfpath[32];
-	snprintf(elfpath, sizeof(elfpath), "%s.app", path);
+	char elfpath[32] = "init.app";
+	//snprintf(elfpath, sizeof(elfpath), "%s.app", path);
 	int fd = open(elfpath, O_RDONLY);
 	if (fd < 0) {
 		perror("open");
@@ -533,8 +533,8 @@ static void vmctx_copy(struct vmctx *dst, struct vmctx *src) {
 
 static int do_fork(unsigned long sp) {
 	struct task *t = sched_new(forktramp, (void*)sp, 0);
-        vmctx_copy(&t->vm, &current->vm);
-        policy_run(t);
+    vmctx_copy(&t->vm, &current->vm);
+    policy_run(t);
 }
 
 int sys_exit(int code) {

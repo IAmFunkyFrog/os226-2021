@@ -60,7 +60,7 @@ struct file {
 };
 
 struct task {
-	char stack[8192];
+	char stack[8192 + 8]; // +8 добавлено чтобы внутри функции ctx_make(...) файла ctx.c после того, как мы положим entry на вершину стека адрес регистра %rsp был кратен 16 (выровнен по 16 байт)
 	struct vmctx vm;
 
 	union {
@@ -83,7 +83,7 @@ struct task {
 
 	// policy support
 	struct task *next;
-};
+} __attribute__((aligned(16)));
 
 struct savedctx {
 	unsigned long rbp;

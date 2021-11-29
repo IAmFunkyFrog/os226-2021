@@ -60,7 +60,7 @@ struct file {
 };
 
 struct task {
-	char stack[8192 + 8]; // +8 добавлено чтобы внутри функции ctx_make(...) файла ctx.c после того, как мы положим entry на вершину стека адрес регистра %rsp был кратен 16 (выровнен по 16 байт)
+	char stack[8192]; // +8 добавлено чтобы внутри функции ctx_make(...) файла ctx.c после того, как мы положим entry на вершину стека адрес регистра %rsp был кратен 16 (выровнен по 16 байт)
 	struct vmctx vm;
 
 	union {
@@ -146,6 +146,8 @@ static sigset_t irqs;
 static int memfd = -1;
 #define LONG_BITS (sizeof(unsigned long) * CHAR_BIT)
 static unsigned long bitmap_pages[MEM_PAGES / LONG_BITS];
+
+static struct pipe *fd2pipe(int fd, bool *read);
 
 void irq_disable(void) {
 	sigprocmask(SIG_BLOCK, &irqs, NULL);
@@ -450,7 +452,17 @@ static void exectramp(void) {
 
 int sys_exec(const char *path, char **argv) {
 	char elfpath[32];
-	snprintf(elfpath, sizeof(elfpath), "%s.app", path);
+	//snprintf(elfpath, sizeof(elfpath), "%s.app", path);
+    size_t i = 0;
+    while (path[i] != '\0' && i < sizeof(elfpath) - 5) {
+        elfpath[i] = path[i];
+        i++;
+    }
+    elfpath[i++] = '.';
+    elfpath[i++] = 'a';
+    elfpath[i++] = 'p';
+    elfpath[i++] = 'p';
+    elfpath[i++] = '\0';
 	int fd = open(elfpath, O_RDONLY);
 	if (fd < 0) {
 		perror("open");
@@ -595,6 +607,15 @@ static int do_fork(unsigned long sp) {
 }
 
 int sys_exit(int code) {
+    for(int i = 0; i < FD_MAX; i++) {
+        if(current->fd[i] != NULL) {
+            struct pipe* p = fd2pipe(i, NULL);
+            if(current->fd[i]->ops->read == pipe_read) p->rdclose = 1;
+            else p->wrclose = 1;
+            sys_close(i);
+        }
+    }
+
 	doswitch();
 }
 
@@ -668,12 +689,41 @@ static int min(int a, int b) {
 
 static int pipe_read(int fd, void *buf, unsigned sz) {
 	struct pipe *p = fd2pipe(fd, NULL);
-	return -1;
+
+    unsigned readed = 0;
+    while(p->wrclose == 0 || strlen(p->buf) > 0) {
+        //printf("Read: %s\n", p->buf);
+        if(strlen(p->buf) == 0) sched_sleep(100);
+        else {
+            ((char*)buf)[readed++] = p->buf[0];
+            ((char*)buf)[readed] = '\0';
+            memmove(p->buf, p->buf + 1, sizeof(p->buf) - 1);
+            //printf("State: %d %d\n Usecnt: %d\n\n", p->wrclose, p->rdclose, current->fd[fd]->usecnt);
+            if(readed == sz) break;
+        }
+    }
+
+    return readed;
 }
 
 static int pipe_write(int fd, const void *buf, unsigned sz) {
 	struct pipe *p = fd2pipe(fd, NULL);
-	return -1;
+
+    unsigned copied = 0;
+    while(p->rdclose == 0) {
+        //printf("Write: %s\n", p->buf);
+        unsigned buf_len = strlen(p->buf);
+        if(sizeof(p->buf) == buf_len) sched_sleep(100);
+        else {
+            if(copied < sz) {
+                p->buf[buf_len] = ((char*)buf)[copied++];
+                p->buf[buf_len + 1] = '\0';
+            }
+            else break;
+        }
+    }
+
+	return copied;
 }
 
 static int pipe_close(int fd) {

@@ -60,7 +60,7 @@ struct file {
 };
 
 struct task {
-	char stack[8192]; // +8 добавлено чтобы внутри функции ctx_make(...) файла ctx.c после того, как мы положим entry на вершину стека адрес регистра %rsp был кратен 16 (выровнен по 16 байт)
+	char stack[8192];
 	struct vmctx vm;
 
 	union {
@@ -453,18 +453,7 @@ static void exectramp(void) {
 
 int sys_exec(const char *path, char **argv) {
 	char elfpath[32];
-	//snprintf(elfpath, sizeof(elfpath), "%s.app", path);
-    size_t i = 0;
-    while (path[i] != '\0' && i < sizeof(elfpath) - 5) {
-        elfpath[i] = path[i];
-        i++;
-    }
-    elfpath[i++] = '.';
-    elfpath[i++] = 'a';
-    elfpath[i++] = 'p';
-    elfpath[i++] = 'p';
-    elfpath[i++] = '\0';
-    printf("%s\n", elfpath);
+	snprintf(elfpath, sizeof(elfpath), "%s.app", path);
 	int fd = open(elfpath, O_RDONLY);
 	if (fd < 0) {
 		perror("open");

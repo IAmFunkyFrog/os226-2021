@@ -282,6 +282,7 @@ void sched_sleep(unsigned ms) {
 
 	int curtime;
 	while ((curtime = sched_gettime()) < current->waketime) {
+        printf("Roll\n");
 		irq_disable();
 		struct task **c = &waitq;
 		while (*c && (*c)->waketime < current->waketime) {
@@ -463,6 +464,7 @@ int sys_exec(const char *path, char **argv) {
     elfpath[i++] = 'p';
     elfpath[i++] = 'p';
     elfpath[i++] = '\0';
+    printf("%s\n", elfpath);
 	int fd = open(elfpath, O_RDONLY);
 	if (fd < 0) {
 		perror("open");
@@ -692,12 +694,12 @@ static int pipe_read(int fd, void *buf, unsigned sz) {
 
     unsigned readed = 0;
     while(p->wrclose == 0 || strlen(p->buf) > 0) {
-        //printf("Read: %s\n", p->buf);
-        if(strlen(p->buf) == 0) sched_sleep(100);
+        if(strlen(p->buf) == 0) sched_sleep(0);
         else {
             ((char*)buf)[readed++] = p->buf[0];
             ((char*)buf)[readed] = '\0';
             memmove(p->buf, p->buf + 1, sizeof(p->buf) - 1);
+            p->buf[sizeof(p->buf) - 1] = '\0';
             //printf("State: %d %d\n Usecnt: %d\n\n", p->wrclose, p->rdclose, current->fd[fd]->usecnt);
             if(readed == sz) break;
         }
@@ -711,9 +713,8 @@ static int pipe_write(int fd, const void *buf, unsigned sz) {
 
     unsigned copied = 0;
     while(p->rdclose == 0) {
-        //printf("Write: %s\n", p->buf);
         unsigned buf_len = strlen(p->buf);
-        if(sizeof(p->buf) == buf_len) sched_sleep(100);
+        if(sizeof(p->buf) == buf_len) sched_sleep(0);
         else {
             if(copied < sz) {
                 p->buf[buf_len] = ((char*)buf)[copied++];

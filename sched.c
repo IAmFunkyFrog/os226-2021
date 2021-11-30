@@ -124,6 +124,17 @@ static void syscallbottom(unsigned long sp);
 static int do_fork(unsigned long sp);
 static void set_fd(struct task *t, int fd, struct file *newf);
 static int pipe_read(int fd, void *buf, unsigned sz);
+static int pipe_write(int fd, const void *buf, unsigned sz);
+static int pipe_close(int fd);
+
+static const struct fileops pipe_rd_ops = {
+        .read = pipe_read,
+        .close = pipe_close,
+};
+static const struct fileops pipe_wr_ops = {
+        .write = pipe_write,
+        .close = pipe_close,
+};
 
 static int time;
 
@@ -600,9 +611,9 @@ static int do_fork(unsigned long sp) {
 int sys_exit(int code) {
     for(int i = 0; i < FD_MAX; i++) {
         if(current->fd[i] != NULL) {
-            struct pipe* p = fd2pipe(i, NULL);
-            if(current->fd[i]->ops->read == pipe_read) p->rdclose = 1;
-            else p->wrclose = 1;
+            struct pipe *p = fd2pipe(i, NULL);
+            if (current->fd[i]->ops == &pipe_rd_ops) p->rdclose = 1;
+            else if(current->fd[i]->ops == &pipe_wr_ops) p->wrclose = 1;
             sys_close(i);
         }
     }
@@ -682,15 +693,21 @@ static int pipe_read(int fd, void *buf, unsigned sz) {
 	struct pipe *p = fd2pipe(fd, NULL);
 
     unsigned readed = 0;
-    while(p->wrclose == 0 || strlen(p->buf) > 0) {
-        if(strlen(p->buf) == 0) sched_sleep(0);
+    while((p->wrclose == 0 || p->rd != p->wr) && readed < sz) {
+        if(p->rd == p->wr) {
+            current->next = p->q;
+            p->q = current;
+            doswitch();
+        }
         else {
-            ((char*)buf)[readed++] = p->buf[0];
+            ((char*)buf)[readed++] = p->buf[p->rd++];
             ((char*)buf)[readed] = '\0';
-            memmove(p->buf, p->buf + 1, sizeof(p->buf) - 1);
-            p->buf[sizeof(p->buf) - 1] = '\0';
-            //printf("State: %d %d\n Usecnt: %d\n\n", p->wrclose, p->rdclose, current->fd[fd]->usecnt);
-            if(readed == sz) break;
+            if(p->rd == sizeof(p->buf)) p->rd = 0;
+
+            struct task *t;
+            while ((t = pop_task(&p->q))) {
+                policy_run(t);
+            }
         }
     }
 
@@ -701,15 +718,20 @@ static int pipe_write(int fd, const void *buf, unsigned sz) {
 	struct pipe *p = fd2pipe(fd, NULL);
 
     unsigned copied = 0;
-    while(p->rdclose == 0) {
-        unsigned buf_len = strlen(p->buf);
-        if(sizeof(p->buf) == buf_len) sched_sleep(0);
+    while(p->rdclose == 0 && copied < sz) {
+        if((p->wr + 1) % sizeof(p->buf) == p->rd) {
+            current->next = p->q;
+            p->q = current;
+            doswitch();
+        }
         else {
-            if(copied < sz) {
-                p->buf[buf_len] = ((char*)buf)[copied++];
-                p->buf[buf_len + 1] = '\0';
+            p->buf[p->wr++] = ((char*)buf)[copied++];
+            if(p->wr == sizeof(p->buf)) p->wr = 0;
+
+            struct task *t;
+            while ((t = pop_task(&p->q))) {
+                policy_run(t);
             }
-            else break;
         }
     }
 
@@ -736,15 +758,6 @@ static int pipe_close(int fd) {
 		pool_free(&pipepool, p);
 	}
 }
-
-static const struct fileops pipe_rd_ops = {
-	.read = pipe_read,
-	.close = pipe_close,
-};
-static const struct fileops pipe_wr_ops = {
-	.write = pipe_write,
-	.close = pipe_close,
-};
 
 static void init_file(struct file *f, const struct fileops *ops) {
 	f->ops = ops;

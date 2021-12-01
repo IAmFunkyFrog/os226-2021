@@ -2,10 +2,12 @@
 
 #include "ctx.h"
 
-void ctx_make(struct ctx *ctx, void *entry, void *stack) {
+#define ENDBR64 0xfa1e0ff3
+
+void ctx_make(struct ctx *ctx, void *entry, void *stack, int alignment) {
         memset(ctx, 0, sizeof(*ctx));
 
-        if(*(unsigned*) entry == 0xfa1e0ff3) stack -= 8;
+        if(alignment == STANDARD) stack = (void*)(((unsigned long)stack & ~0xf) - 8);
         ctx->rsp = (unsigned long) stack;
         ctx->rsp -= 8;
         *(unsigned long *)ctx->rsp = (unsigned long) entry;

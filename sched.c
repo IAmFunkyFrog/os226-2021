@@ -475,7 +475,7 @@ int sys_exec(const char *path, char **argv) {
 	void *rawelf = NULL;
 
     void* app_in_rootfs = rootfs;
-    while(rawelf == NULL && app_in_rootfs != NULL) {
+    while(rawelf == NULL) {
         struct header_old_cpio hdr = *(struct header_old_cpio*) app_in_rootfs;
 
         if (hdr.c_magic != CPIO_MAGIC) {

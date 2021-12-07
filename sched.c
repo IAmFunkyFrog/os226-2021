@@ -9,6 +9,7 @@
 #include <unistd.h>
 #include <signal.h>
 #include <elf.h>
+#include <sys/stat.h>
 #include <sys/mman.h>
 #include <sys/fcntl.h>
 
@@ -36,6 +37,24 @@
 #define FD_MAX 16
 
 #define offsetof(s, f) ((unsigned long)(&((s*)0)->f))
+
+#define CPIO_MAGIC 0x71c7
+#define CPIO_END "TRAILER!!!"
+
+struct header_old_cpio {
+    unsigned short   c_magic;
+    unsigned short   c_dev;
+    unsigned short   c_ino;
+    unsigned short   c_mode;
+    unsigned short   c_uid;
+    unsigned short   c_gid;
+    unsigned short   c_nlink;
+    unsigned short   c_rdev;
+    unsigned short   c_mtime[2];
+    unsigned short   c_namesize;
+    unsigned short   c_filesize[2];
+} __attribute__((__packed__));
+
 
 extern int shell(int argc, char *argv[]);
 
@@ -83,7 +102,7 @@ struct task {
 
 	// policy support
 	struct task *next;
-};
+} __attribute__((aligned(16)));
 
 struct savedctx {
 	unsigned long rbp;
@@ -254,9 +273,7 @@ static void tasktramp(void) {
 	doswitch();
 }
 
-struct task *sched_new(void (*entrypoint)(void *aspace),
-		void *aspace,
-		int priority) {
+struct task *sched_new(void (*entrypoint)(void *), void *aspace, int priority, int alignment) {
 
 	struct task *t = pool_alloc(&taskpool);
 	t->entry = entrypoint;
@@ -264,7 +281,7 @@ struct task *sched_new(void (*entrypoint)(void *aspace),
 	t->priority = priority;
 	t->next = NULL;
 
-	ctx_make(&t->ctx, tasktramp, t->stack + sizeof(t->stack));
+	ctx_make(&t->ctx, tasktramp, t->stack + sizeof(t->stack), alignment);
 
 	return t;
 }
@@ -455,9 +472,31 @@ int sys_exec(const char *path, char **argv) {
 	char elfpath[32];
 	snprintf(elfpath, sizeof(elfpath), "%s.app", path);
 
-	fprintf(stderr, "FIXME: find elf content in `rootfs`\n");
-	abort();
 	void *rawelf = NULL;
+
+    void* app_in_rootfs = rootfs;
+    while(rawelf == NULL && app_in_rootfs != NULL) {
+        struct header_old_cpio hdr = *(struct header_old_cpio*) app_in_rootfs;
+
+        if (hdr.c_magic != CPIO_MAGIC) {
+            fprintf(stderr, "Given file is not .cpio\n");
+            abort();
+        }
+
+        char filename[32];
+        strncpy(filename, (char *) app_in_rootfs + sizeof(struct header_old_cpio), sizeof(filename));
+
+        unsigned int namesize = hdr.c_namesize + hdr.c_namesize % 2;
+        unsigned int filesize = (((unsigned int)hdr.c_filesize[0]) << 16) + hdr.c_filesize[1] + hdr.c_filesize[1] % 2;
+
+        if(strcmp(filename, CPIO_END) == 0) break;
+        else if(strcmp(filename, elfpath) != 0) app_in_rootfs += sizeof(struct header_old_cpio) + namesize + filesize;
+        else {
+            rawelf = app_in_rootfs += sizeof(struct header_old_cpio) + namesize;
+            break;
+        }
+    }
+
 
 	if (strncmp(rawelf, "\x7f" "ELF" "\x2", 5)) {
 		printf("ELF header mismatch\n");
@@ -535,7 +574,7 @@ int sys_exec(const char *path, char **argv) {
 
 	struct ctx dummy;
 	struct ctx new;
-	ctx_make(&new, exectramp, (char*)copyargv);
+	ctx_make(&new, exectramp, (char*)copyargv, STANDARD);
 
 	irq_disable();
 	current->main = (void*)ehdr->e_entry;
@@ -557,7 +596,7 @@ static void forktramp(void* arg) {
 
 	struct ctx dummy;
 	struct ctx new;
-	ctx_make(&new, exittramp, arg);
+	ctx_make(&new, exittramp, arg, NONE);
 	ctx_switch(&dummy, &new);
 }
 
@@ -585,7 +624,7 @@ static void vmctx_copy(struct vmctx *dst, struct vmctx *src) {
 }
 
 static int do_fork(unsigned long sp) {
-	struct task *t = sched_new(forktramp, (void*)sp, 0);
+	struct task *t = sched_new(forktramp, (void*)sp, 0, STANDARD);
 	vmctx_copy(&t->vm, &current->vm);
 	for (int i = 0; i < FD_MAX; ++i) {
 		set_fd(t, i, current->fd[i]);
@@ -838,7 +877,7 @@ int main(int argc, char *argv[]) {
 	}
 
 	policy_cmp = prio_cmp;
-	struct task *t = sched_new(inittramp, NULL, 0);
+	struct task *t = sched_new(inittramp, NULL, 0, STANDARD);
 	vmctx_make(&t->vm, 4 * PAGE_SIZE);
 
 	struct file term;

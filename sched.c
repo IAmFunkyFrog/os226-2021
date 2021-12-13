@@ -12,6 +12,7 @@
 #include <sys/stat.h>
 #include <sys/mman.h>
 #include <sys/fcntl.h>
+#include <sys/types.h>
 
 #include "sched.h"
 #include "timer.h"
@@ -136,8 +137,44 @@ struct pipe {
 	unsigned rdclose : 1;
 	unsigned wrclose : 1;
 };
-static struct pipe pipearray[4];
-static struct pool pipepool = POOL_INITIALIZER_ARRAY(pipearray);
+
+#define LONG_BITS (sizeof(unsigned long) * CHAR_BIT)
+struct shared_memory {
+    struct task *runq;
+    struct task *waitq;
+    struct task taskarray[16];
+    struct pool taskpool; // need to initialize
+    int memfd;
+    void *rootfs;
+    unsigned long rootfs_sz;
+    int lock;
+    unsigned long bitmap_pages[MEM_PAGES / LONG_BITS];
+};
+struct shared_memory* sh_mem;
+int locked = 1;
+int unlocked = 0;
+
+int acquire_lock() {
+    //printf("%d: Acquiring %d\n", sh_mem->lock, getpid());
+    int expected = unlocked;
+    while(__atomic_compare_exchange(&sh_mem->lock, &expected, &locked, false, __ATOMIC_RELAXED, __ATOMIC_RELAXED) == false) {
+        expected = unlocked;
+        //printf("%d: Re-Acquiring %d\n", sh_mem->lock, getpid());
+    }
+    //printf("%d: Acquired %d\n", sh_mem->lock, getpid());
+}
+int release_lock() {
+    //printf("%d: Releasing %d\n", sh_mem->lock, getpid());
+    if(__atomic_compare_exchange(&sh_mem->lock, &locked, &unlocked, false, __ATOMIC_RELAXED, __ATOMIC_RELAXED) == false) {
+        fprintf(stderr, "Illegal release lock");
+        exit(-1);
+    }
+    //printf("%d: Released %d\n", sh_mem->lock, getpid());
+}
+
+
+static struct pipe pipearray[4]; //+
+static struct pool pipepool = POOL_INITIALIZER_ARRAY(pipearray); //+
 
 static void syscallbottom(unsigned long sp);
 static int do_fork(unsigned long sp);
@@ -149,25 +186,24 @@ static int time;
 static int current_start;
 static struct task *current;
 static struct task *idle;
-static struct task *runq;
-static struct task *waitq;
 
-static struct task *pendingq;
-static struct task *lastpending;
+
+static struct task *runq;//+
+static struct task *waitq;//+
 
 static int (*policy_cmp)(struct task *t1, struct task *t2);
 
-static struct task taskarray[16];
-static struct pool taskpool = POOL_INITIALIZER_ARRAY(taskarray);
+static struct task taskarray[16]; //+
+static struct pool taskpool = POOL_INITIALIZER_ARRAY(taskarray); //+
 
 static sigset_t irqs;
 
-static int memfd = -1;
+static int memfd = -1; //+
 #define LONG_BITS (sizeof(unsigned long) * CHAR_BIT)
-static unsigned long bitmap_pages[MEM_PAGES / LONG_BITS];
+static unsigned long bitmap_pages[MEM_PAGES / LONG_BITS]; //+
 
-static void *rootfs;
-static unsigned long rootfs_sz;
+static void *rootfs; //+
+static unsigned long rootfs_sz;//+
 
 void irq_disable(void) {
 	sigprocmask(SIG_BLOCK, &irqs, NULL);
@@ -201,7 +237,7 @@ static void bitmap_free(unsigned long *bitmap, size_t size, unsigned v) {
 }
 
 static void policy_run(struct task *t) {
-	struct task **c = &runq;
+	struct task **c = &sh_mem->runq;
 
 	while (*c && (t == idle || policy_cmp(*c, t) <= 0)) {
 		c = &(*c)->next;
@@ -227,7 +263,7 @@ static void vmctx_make(struct vmctx *vm, size_t stack_size) {
 	vm->stack = USER_PAGES - stack_size / PAGE_SIZE;
 	memset(vm->map, -1, sizeof(vm->map));
 	for (int i = 0; i < stack_size / PAGE_SIZE; ++i) {
-		int mempage = bitmap_alloc(bitmap_pages, sizeof(bitmap_pages));
+		int mempage = bitmap_alloc(sh_mem->bitmap_pages, sizeof(sh_mem->bitmap_pages));
 		if (mempage == -1) {
 			abort();
 		}
@@ -245,7 +281,7 @@ static void vmctx_apply(struct vmctx *vm) {
 				PAGE_SIZE,
 				PROT_READ | PROT_WRITE | PROT_EXEC,
 				MAP_SHARED | MAP_FIXED,
-				memfd, vm->map[i] * PAGE_SIZE);
+				sh_mem->memfd, vm->map[i] * PAGE_SIZE);
 		if (addr == MAP_FAILED) {
 			perror("mmap");
 			abort();
@@ -259,7 +295,9 @@ static void vmctx_apply(struct vmctx *vm) {
 
 static void doswitch(void) {
 	struct task *old = current;
-	current = pop_task(&runq);
+    acquire_lock();
+	current = pop_task(&sh_mem->runq);
+    release_lock();
 
 	current_start = sched_gettime();
 	vmctx_apply(&current->vm);
@@ -275,7 +313,7 @@ static void tasktramp(void) {
 
 struct task *sched_new(void (*entrypoint)(void *), void *aspace, int priority, int alignment) {
 
-	struct task *t = pool_alloc(&taskpool);
+	struct task *t = pool_alloc(&sh_mem->taskpool);
 	t->entry = entrypoint;
 	t->as = aspace;
 	t->priority = priority;
@@ -290,7 +328,9 @@ void sched_sleep(unsigned ms) {
 
 	if (!ms) {
 		irq_disable();
+        acquire_lock();
 		policy_run(current);
+        release_lock();
 		doswitch();
 		irq_enable();
 		return;
@@ -329,15 +369,19 @@ static void hctx_push(greg_t *regs, unsigned long val) {
 static void timerbottom() {
 	time += TICK_PERIOD;
 
+    acquire_lock();
 	while (waitq && waitq->waketime <= sched_gettime()) {
 		struct task *t = waitq;
 		waitq = waitq->next;
 		policy_run(t);
 	}
+    release_lock();
 
 	if (TICK_PERIOD <= sched_gettime() - current_start) {
 		irq_disable();
+        acquire_lock();
 		policy_run(current);
+        release_lock();
 		doswitch();
 		irq_enable();
 	}
@@ -389,11 +433,15 @@ void sched_run(void) {
 	sigemptyset(&irqs);
 	sigaddset(&irqs, SIGALRM);
 
-	/*timer_init(TICK_PERIOD, top);*/
+	timer_init(TICK_PERIOD, top);
 
 	irq_disable();
 
-	idle = pool_alloc(&taskpool);
+    pid_t f_id = fork();
+
+    acquire_lock();
+	idle = pool_alloc(&sh_mem->taskpool);
+    release_lock();
 	memset(&idle->vm.map, -1, sizeof(idle->vm.map));
 
 	current = idle;
@@ -401,11 +449,14 @@ void sched_run(void) {
 	sigset_t none;
 	sigemptyset(&none);
 
-	while (runq || waitq) {
-		if (runq) {
+	while (sh_mem->runq || sh_mem->waitq) {
+        acquire_lock();
+		if (sh_mem->runq) {
 			policy_run(current);
+            release_lock();
 			doswitch();
-		} else {
+		} else if(sh_mem->waitq) {
+            release_lock();
 			sigsuspend(&none);
 		}
 
@@ -441,10 +492,10 @@ static int vmctx_brk(struct vmctx *vm, void *addr) {
 	}
 
 	for (unsigned i = vm->brk; i < newbrk; ++i) {
-		vm->map[i] = bitmap_alloc(bitmap_pages, sizeof(bitmap_pages));
+		vm->map[i] = bitmap_alloc(sh_mem->bitmap_pages, sizeof(sh_mem->bitmap_pages));
 	}
 	for (unsigned i = newbrk; i < vm->brk; ++i) {
-		bitmap_free(bitmap_pages, sizeof(bitmap_pages), vm->map[i]);
+		bitmap_free(sh_mem->bitmap_pages, sizeof(sh_mem->bitmap_pages), vm->map[i]);
 	}
 	vm->brk = newbrk;
 
@@ -474,7 +525,7 @@ int sys_exec(const char *path, char **argv) {
 
 	void *rawelf = NULL;
 
-    void* app_in_rootfs = rootfs;
+    void* app_in_rootfs = sh_mem->rootfs;
     while(rawelf == NULL) {
         struct header_old_cpio hdr = *(struct header_old_cpio*) app_in_rootfs;
 
@@ -492,7 +543,7 @@ int sys_exec(const char *path, char **argv) {
         if(strcmp(filename, CPIO_END) == 0) break;
         else if(strcmp(filename, elfpath) != 0) app_in_rootfs += sizeof(struct header_old_cpio) + namesize + filesize;
         else {
-            rawelf = app_in_rootfs += sizeof(struct header_old_cpio) + namesize;
+            rawelf = app_in_rootfs + sizeof(struct header_old_cpio) + namesize;
             break;
         }
     }
@@ -602,11 +653,11 @@ static void forktramp(void* arg) {
 
 static void copyrange(struct vmctx *vm, unsigned from, unsigned to) {
         for (unsigned i = from; i < to; ++i) {
-		vm->map[i] = bitmap_alloc(bitmap_pages, sizeof(bitmap_pages));
+		vm->map[i] = bitmap_alloc(sh_mem->bitmap_pages, sizeof(sh_mem->bitmap_pages));
 		if (vm->map[i] == -1) {
 			abort();
 		}
-                if (-1 == pwrite(memfd,
+                if (-1 == pwrite(sh_mem->memfd,
                                 USER_START + i * PAGE_SIZE,
                                 PAGE_SIZE,
 				vm->map[i] * PAGE_SIZE)) {
@@ -624,13 +675,17 @@ static void vmctx_copy(struct vmctx *dst, struct vmctx *src) {
 }
 
 static int do_fork(unsigned long sp) {
+    acquire_lock();
 	struct task *t = sched_new(forktramp, (void*)sp, 0, STANDARD);
+    release_lock();
 	vmctx_copy(&t->vm, &current->vm);
 	for (int i = 0; i < FD_MAX; ++i) {
 		set_fd(t, i, current->fd[i]);
 	}
+    acquire_lock();
 	policy_run(t);
-	return t - taskarray + 1;
+    release_lock();
+	return t - sh_mem->taskarray + 1;
 }
 
 int sys_exit(int code) {
@@ -841,18 +896,24 @@ int main(int argc, char *argv[]) {
 	};
 	sigemptyset(&act.sa_mask);
 
+    sh_mem = mmap(NULL, sizeof(struct shared_memory), PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_SHARED, -1, 0);
+    sh_mem->lock = 0;
+    sh_mem->taskpool = (struct pool)POOL_INITIALIZER_ARRAY(sh_mem->taskarray);
+    sh_mem->runq = NULL;
+    sh_mem->waitq = NULL;
+
 	if (-1 == sigaction(SIGSEGV, &act, NULL)) {
 		perror("signal set failed");
 		return 1;
 	}
 
-	memfd = memfd_create("mem", 0);
-	if (memfd < 0) {
+	sh_mem->memfd = memfd_create("mem", 0);
+	if (sh_mem->memfd < 0) {
 		perror("memfd_create");
 		return 1;
 	}
 
-	if (ftruncate(memfd, PAGE_SIZE * MEM_PAGES) < 0) {
+	if (ftruncate(sh_mem->memfd, PAGE_SIZE * MEM_PAGES) < 0) {
 		perror("ftrucate");
 		return 1;
 	}
@@ -869,9 +930,9 @@ int main(int argc, char *argv[]) {
 		return 1;
 	}
 
-	rootfs_sz = st.st_size;
-	rootfs = mmap(NULL, rootfs_sz, PROT_READ, MAP_PRIVATE, fd, 0);
-	if (rootfs == MAP_FAILED) {
+	sh_mem->rootfs_sz = st.st_size;
+	sh_mem->rootfs = mmap(NULL, sh_mem->rootfs_sz, PROT_READ, MAP_PRIVATE, fd, 0);
+	if (sh_mem->rootfs == MAP_FAILED) {
 		perror("mmap rootfs");
 		return 1;
 	}

@@ -15,26 +15,36 @@ int os_print(int fd, const char *str) {
 
 int main(int argc, char* argv[]) {
 	os_write(1, "start\n", 6);
-
-	int pipe[2];
-	int ret = os_pipe(pipe);
-	if (ret < 0) {
-		os_print(2, "cannot create pipe\n");
-		os_exit(1);
-	}
-	int pid = os_fork();
-	if (pid) {
-		os_close(1);
-		os_dup(pipe[1]);
-		const char *arg[] = { "seq", "100", (char*)0 };
-		os_exec("seq", (char**)arg);
-	} else {
-		os_close(0);
-		os_dup(pipe[0]);
-		const char *arg[] = { "grep", "2", (char*)0 };
-		os_exec("grep", (char**)arg);
-	}
-
-	os_print(2, "should not reach here\n");
-	os_exit(1);
+    int pid1 = os_fork();
+    if(pid1 == 0) {
+        int pid2 = os_fork();
+        if(pid2 == 0) {
+            while(1) {
+                os_write(1, "pid_0\n", 6);
+                for(int i = 0; i < 1000000000; i++);
+            }
+        }
+        else {
+            while(1) {
+                os_write(1, "pid_1\n", 6);
+                for(int i = 0; i < 1000000000; i++);
+            }
+        }
+    }
+    else {
+        int pid2 = os_fork();
+        if(pid2 == 0) {
+            while(1) {
+                os_write(1, "pid_2\n", 6);
+                for(int i = 0; i < 1000000000; i++);
+            }
+        }
+        else {
+            while(1) {
+                os_write(1, "pid_3\n", 6);
+                for(int i = 0; i < 1000000000; i++);
+            }
+        }
+    }
+    os_exit(0);
 }

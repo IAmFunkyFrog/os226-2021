@@ -155,26 +155,21 @@ int locked = 1;
 int unlocked = 0;
 
 int acquire_lock() {
-    //printf("%d: Acquiring %d\n", sh_mem->lock, getpid());
     int expected = unlocked;
     while(__atomic_compare_exchange(&sh_mem->lock, &expected, &locked, false, __ATOMIC_RELAXED, __ATOMIC_RELAXED) == false) {
         expected = unlocked;
-        //printf("%d: Re-Acquiring %d\n", sh_mem->lock, getpid());
     }
-    //printf("%d: Acquired %d\n", sh_mem->lock, getpid());
 }
 int release_lock() {
-    //printf("%d: Releasing %d\n", sh_mem->lock, getpid());
     if(__atomic_compare_exchange(&sh_mem->lock, &locked, &unlocked, false, __ATOMIC_RELAXED, __ATOMIC_RELAXED) == false) {
         fprintf(stderr, "Illegal release lock");
         exit(-1);
     }
-    //printf("%d: Released %d\n", sh_mem->lock, getpid());
 }
 
 
-static struct pipe pipearray[4]; //+
-static struct pool pipepool = POOL_INITIALIZER_ARRAY(pipearray); //+
+static struct pipe pipearray[4];
+static struct pool pipepool = POOL_INITIALIZER_ARRAY(pipearray);
 
 static void syscallbottom(unsigned long sp);
 static int do_fork(unsigned long sp);
@@ -187,23 +182,9 @@ static int current_start;
 static struct task *current;
 static struct task *idle;
 
-
-static struct task *runq;//+
-static struct task *waitq;//+
-
 static int (*policy_cmp)(struct task *t1, struct task *t2);
 
-static struct task taskarray[16]; //+
-static struct pool taskpool = POOL_INITIALIZER_ARRAY(taskarray); //+
-
 static sigset_t irqs;
-
-static int memfd = -1; //+
-#define LONG_BITS (sizeof(unsigned long) * CHAR_BIT)
-static unsigned long bitmap_pages[MEM_PAGES / LONG_BITS]; //+
-
-static void *rootfs; //+
-static unsigned long rootfs_sz;//+
 
 void irq_disable(void) {
 	sigprocmask(SIG_BLOCK, &irqs, NULL);
@@ -238,11 +219,6 @@ static void bitmap_free(unsigned long *bitmap, size_t size, unsigned v) {
 
 static void policy_run(struct task *t) {
 	struct task **c = &sh_mem->runq;
-
-    /*for(struct task* cur = sh_mem->runq; cur != NULL; cur = cur->next) {
-        printf("Task %d with adress %p on %d\n", cur - sh_mem->taskarray, cur->entry, getpid());
-    }
-    printf("\n");*/
 
 	while (*c && (NULL == (*c)->entry || policy_cmp(*c, t) <= 0)) {
 		c = &(*c)->next;
@@ -301,12 +277,7 @@ static void vmctx_apply(struct vmctx *vm) {
 static void doswitch(void) {
 	struct task *old = current;
     acquire_lock();
-    /*for(struct task* cur = sh_mem->runq; cur != NULL; cur = cur->next) {
-        printf("Task %d with adress %p on %d\n", cur - sh_mem->taskarray, cur->entry, getpid());
-    }*/
 	current = pop_task(&sh_mem->runq);
-    //printf("Popped %d by %d\n", current - sh_mem->taskarray, getpid());
-    //printf("\n");
     release_lock();
 
 	current_start = sched_gettime();
@@ -351,7 +322,7 @@ void sched_sleep(unsigned ms) {
 	int curtime;
 	while ((curtime = sched_gettime()) < current->waketime) {
 		irq_disable();
-		struct task **c = &waitq;
+		struct task **c = &sh_mem->waitq;
 		while (*c && (*c)->waketime < current->waketime) {
 			c = &(*c)->next;
 		}
@@ -377,7 +348,6 @@ static void hctx_push(greg_t *regs, unsigned long val) {
 }
 
 static void timerbottom() {
-    //printf("Stopped %d\n", getpid());
 	time += TICK_PERIOD;
 
     acquire_lock();
@@ -391,7 +361,6 @@ static void timerbottom() {
 	if (TICK_PERIOD <= sched_gettime() - current_start) {
 		irq_disable();
         acquire_lock();
-        //printf("Trying to swap %ld on %d\n", current - sh_mem->taskarray, getpid());
 		policy_run(current);
         release_lock();
 		doswitch();
@@ -467,7 +436,7 @@ void sched_run(void) {
 			policy_run(current);
             release_lock();
 			doswitch();
-		} else if(sh_mem->waitq) {
+		} else {
             release_lock();
 			sigsuspend(&none);
 		}

@@ -239,7 +239,12 @@ static void bitmap_free(unsigned long *bitmap, size_t size, unsigned v) {
 static void policy_run(struct task *t) {
 	struct task **c = &sh_mem->runq;
 
-	while (*c && (t == idle || policy_cmp(*c, t) <= 0)) {
+    /*for(struct task* cur = sh_mem->runq; cur != NULL; cur = cur->next) {
+        printf("Task %d with adress %p on %d\n", cur - sh_mem->taskarray, cur->entry, getpid());
+    }
+    printf("\n");*/
+
+	while (*c && (NULL == (*c)->entry || policy_cmp(*c, t) <= 0)) {
 		c = &(*c)->next;
 	}
 	t->next = *c;
@@ -296,7 +301,12 @@ static void vmctx_apply(struct vmctx *vm) {
 static void doswitch(void) {
 	struct task *old = current;
     acquire_lock();
+    /*for(struct task* cur = sh_mem->runq; cur != NULL; cur = cur->next) {
+        printf("Task %d with adress %p on %d\n", cur - sh_mem->taskarray, cur->entry, getpid());
+    }*/
 	current = pop_task(&sh_mem->runq);
+    //printf("Popped %d by %d\n", current - sh_mem->taskarray, getpid());
+    //printf("\n");
     release_lock();
 
 	current_start = sched_gettime();
@@ -367,12 +377,13 @@ static void hctx_push(greg_t *regs, unsigned long val) {
 }
 
 static void timerbottom() {
+    //printf("Stopped %d\n", getpid());
 	time += TICK_PERIOD;
 
     acquire_lock();
-	while (waitq && waitq->waketime <= sched_gettime()) {
-		struct task *t = waitq;
-		waitq = waitq->next;
+	while (sh_mem->waitq && sh_mem->waitq->waketime <= sched_gettime()) {
+		struct task *t = sh_mem->waitq;
+        sh_mem->waitq = sh_mem->waitq->next;
 		policy_run(t);
 	}
     release_lock();
@@ -380,6 +391,7 @@ static void timerbottom() {
 	if (TICK_PERIOD <= sched_gettime() - current_start) {
 		irq_disable();
         acquire_lock();
+        //printf("Trying to swap %ld on %d\n", current - sh_mem->taskarray, getpid());
 		policy_run(current);
         release_lock();
 		doswitch();
@@ -433,11 +445,11 @@ void sched_run(void) {
 	sigemptyset(&irqs);
 	sigaddset(&irqs, SIGALRM);
 
+    pid_t f_id = fork();
+
 	timer_init(TICK_PERIOD, top);
 
 	irq_disable();
-
-    pid_t f_id = fork();
 
     acquire_lock();
 	idle = pool_alloc(&sh_mem->taskpool);
@@ -705,7 +717,7 @@ int sys_write(int fd, const void *str, unsigned len) {
 	if (!f || !f->ops->write) {
 		return -1;
 	}
-    printf("Writing under %d\n", getpid());
+    //printf("Writing %d under %d\n", current - sh_mem->taskarray, getpid());
 	return f->ops->write(fd, str, len);
 }
 

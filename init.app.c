@@ -14,20 +14,20 @@ int os_print(int fd, const char *str) {
 }
 
 int main(int argc, char* argv[]) {
-	os_write(1, "start\n", 6);
+    int wait = 100000000;
     int pid1 = os_fork();
     if(pid1 == 0) {
         int pid2 = os_fork();
         if(pid2 == 0) {
             while(1) {
                 os_write(1, "pid_0\n", 6);
-                for(int i = 0; i < 1000000000; i++);
+                for(int i = 0; i < wait; i++);
             }
         }
         else {
             while(1) {
                 os_write(1, "pid_1\n", 6);
-                for(int i = 0; i < 1000000000; i++);
+                for(int i = 0; i < wait; i++);
             }
         }
     }
@@ -36,13 +36,13 @@ int main(int argc, char* argv[]) {
         if(pid2 == 0) {
             while(1) {
                 os_write(1, "pid_2\n", 6);
-                for(int i = 0; i < 1000000000; i++);
+                for(int i = 0; i < wait; i++);
             }
         }
         else {
             while(1) {
                 os_write(1, "pid_3\n", 6);
-                for(int i = 0; i < 1000000000; i++);
+                for(int i = 0; i < wait; i++);
             }
         }
     }

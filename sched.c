@@ -705,6 +705,7 @@ int sys_write(int fd, const void *str, unsigned len) {
 	if (!f || !f->ops->write) {
 		return -1;
 	}
+    printf("Writing under %d\n", getpid());
 	return f->ops->write(fd, str, len);
 }
 

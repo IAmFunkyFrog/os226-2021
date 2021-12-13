@@ -20,13 +20,13 @@ int main(int argc, char* argv[]) {
         int pid2 = os_fork();
         if(pid2 == 0) {
             while(1) {
-                os_write(1, "pid_0\n", 6);
+                os_write(1, "0 pid\n", 6);
                 for(int i = 0; i < wait; i++);
             }
         }
         else {
             while(1) {
-                os_write(1, "pid_1\n", 6);
+                os_write(1, "1 pid\n", 6);
                 for(int i = 0; i < wait; i++);
             }
         }
@@ -35,13 +35,13 @@ int main(int argc, char* argv[]) {
         int pid2 = os_fork();
         if(pid2 == 0) {
             while(1) {
-                os_write(1, "pid_2\n", 6);
+                os_write(1, "2 pid\n", 6);
                 for(int i = 0; i < wait; i++);
             }
         }
         else {
             while(1) {
-                os_write(1, "pid_3\n", 6);
+                os_write(1, "3 pid\n", 6);
                 for(int i = 0; i < wait; i++);
             }
         }

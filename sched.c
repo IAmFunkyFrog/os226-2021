@@ -138,45 +138,47 @@ struct pipe {
 	unsigned wrclose : 1;
 };
 
+static int fork_id = -1;
+
 #define LONG_BITS (sizeof(unsigned long) * CHAR_BIT)
 struct shared_memory {
+    int time;
     struct task *runq;
     struct task *waitq;
     struct task taskarray[16];
     struct pool taskpool; // need to initialize
+    struct pipe pipearray[4];
+    struct pool pipepool; // need to initialize
     int memfd;
     void *rootfs;
     unsigned long rootfs_sz;
-    int lock;
+    int task_lock;
     unsigned long bitmap_pages[MEM_PAGES / LONG_BITS];
 };
-struct shared_memory* sh_mem;
-int locked = 1;
-int unlocked = 0;
+static struct shared_memory* sh_mem;
+static int locked = 1;
+static int unlocked = 0;
 
-int acquire_lock() {
+int acquire_lock(int* lock) {
     int expected = unlocked;
-    while(__atomic_compare_exchange(&sh_mem->lock, &expected, &locked, false, __ATOMIC_RELAXED, __ATOMIC_RELAXED) == false) {
+    while(__atomic_compare_exchange(lock, &expected, &locked, false, __ATOMIC_RELAXED, __ATOMIC_RELAXED) == false) {
         expected = unlocked;
     }
 }
-int release_lock() {
-    if(__atomic_compare_exchange(&sh_mem->lock, &locked, &unlocked, false, __ATOMIC_RELAXED, __ATOMIC_RELAXED) == false) {
+int release_lock(int* lock) {
+    if(__atomic_compare_exchange(lock, &locked, &unlocked, false, __ATOMIC_RELAXED, __ATOMIC_RELAXED) == false) {
         fprintf(stderr, "Illegal release lock");
         exit(-1);
     }
 }
 
-
-static struct pipe pipearray[4];
-static struct pool pipepool = POOL_INITIALIZER_ARRAY(pipearray);
+/*static struct pipe pipearray[4];
+static struct pool pipepool = POOL_INITIALIZER_ARRAY(pipearray);*/
 
 static void syscallbottom(unsigned long sp);
 static int do_fork(unsigned long sp);
 static void set_fd(struct task *t, int fd, struct file *newf);
 static int pipe_read(int fd, void *buf, unsigned sz);
-
-static int time;
 
 static int current_start;
 static struct task *current;
@@ -276,9 +278,9 @@ static void vmctx_apply(struct vmctx *vm) {
 
 static void doswitch(void) {
 	struct task *old = current;
-    acquire_lock();
+    acquire_lock(&sh_mem->task_lock);
 	current = pop_task(&sh_mem->runq);
-    release_lock();
+    release_lock(&sh_mem->task_lock);
 
 	current_start = sched_gettime();
 	vmctx_apply(&current->vm);
@@ -309,9 +311,9 @@ void sched_sleep(unsigned ms) {
 
 	if (!ms) {
 		irq_disable();
-        acquire_lock();
+        acquire_lock(&sh_mem->task_lock);
 		policy_run(current);
-        release_lock();
+        release_lock(&sh_mem->task_lock);
 		doswitch();
 		irq_enable();
 		return;
@@ -348,21 +350,21 @@ static void hctx_push(greg_t *regs, unsigned long val) {
 }
 
 static void timerbottom() {
-	time += TICK_PERIOD;
+	if(fork_id == 0) sh_mem->time += TICK_PERIOD;
 
-    acquire_lock();
+    acquire_lock(&sh_mem->task_lock);
 	while (sh_mem->waitq && sh_mem->waitq->waketime <= sched_gettime()) {
 		struct task *t = sh_mem->waitq;
         sh_mem->waitq = sh_mem->waitq->next;
 		policy_run(t);
 	}
-    release_lock();
+    release_lock(&sh_mem->task_lock);
 
 	if (TICK_PERIOD <= sched_gettime() - current_start) {
 		irq_disable();
-        acquire_lock();
+        acquire_lock(&sh_mem->task_lock);
 		policy_run(current);
-        release_lock();
+        release_lock(&sh_mem->task_lock);
 		doswitch();
 		irq_enable();
 	}
@@ -400,9 +402,9 @@ static void top(int sig, siginfo_t *info, void *ctx) {
 
 long sched_gettime(void) {
 	int cnt1 = timer_cnt() / 1000;
-	int time1 = time;
+	int time1 = sh_mem->time;
 	int cnt2 = timer_cnt() / 1000;
-	int time2 = time;
+	int time2 = sh_mem->time;
 
 	return (cnt1 <= cnt2) ?
 		time1 + cnt2 :
@@ -414,15 +416,15 @@ void sched_run(void) {
 	sigemptyset(&irqs);
 	sigaddset(&irqs, SIGALRM);
 
-    pid_t f_id = fork();
+    fork_id = fork();
 
 	timer_init(TICK_PERIOD, top);
 
 	irq_disable();
 
-    acquire_lock();
+    acquire_lock(&sh_mem->task_lock);
 	idle = pool_alloc(&sh_mem->taskpool);
-    release_lock();
+    release_lock(&sh_mem->task_lock);
 	memset(&idle->vm.map, -1, sizeof(idle->vm.map));
 
 	current = idle;
@@ -431,13 +433,13 @@ void sched_run(void) {
 	sigemptyset(&none);
 
 	while (sh_mem->runq || sh_mem->waitq) {
-        acquire_lock();
+        acquire_lock(&sh_mem->task_lock);
 		if (sh_mem->runq) {
 			policy_run(current);
-            release_lock();
+            release_lock(&sh_mem->task_lock);
 			doswitch();
 		} else {
-            release_lock();
+            release_lock(&sh_mem->task_lock);
 			sigsuspend(&none);
 		}
 
@@ -656,16 +658,16 @@ static void vmctx_copy(struct vmctx *dst, struct vmctx *src) {
 }
 
 static int do_fork(unsigned long sp) {
-    acquire_lock();
+    acquire_lock(&sh_mem->task_lock);
 	struct task *t = sched_new(forktramp, (void*)sp, 0, STANDARD);
-    release_lock();
+    release_lock(&sh_mem->task_lock);
 	vmctx_copy(&t->vm, &current->vm);
 	for (int i = 0; i < FD_MAX; ++i) {
 		set_fd(t, i, current->fd[i]);
 	}
-    acquire_lock();
+    acquire_lock(&sh_mem->task_lock);
 	policy_run(t);
-    release_lock();
+    release_lock(&sh_mem->task_lock);
 	return t - sh_mem->taskarray + 1;
 }
 
@@ -811,7 +813,7 @@ static int pipe_close(int fd) {
 	}
 
 	if (p->rdclose && p->wrclose) {
-		pool_free(&pipepool, p);
+		pool_free(&sh_mem->pipepool, p);
 	}
 }
 
@@ -830,7 +832,7 @@ static void init_file(struct file *f, const struct fileops *ops) {
 }
 
 int sys_pipe(int *pipe) {
-	struct pipe *p = pool_alloc(&pipepool);
+	struct pipe *p = pool_alloc(&sh_mem->pipepool);
 	if (!p) {
 		goto err;
 	}
@@ -858,7 +860,7 @@ int sys_pipe(int *pipe) {
 	return 0;
 
 err_clean:
-	pool_free(&pipepool, p);
+	pool_free(&sh_mem->pipepool, p);
 err:
 	return -1;
 }
@@ -879,8 +881,10 @@ int main(int argc, char *argv[]) {
 	sigemptyset(&act.sa_mask);
 
     sh_mem = mmap(NULL, sizeof(struct shared_memory), PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_SHARED, -1, 0);
-    sh_mem->lock = 0;
+    sh_mem->time = 0;
+    sh_mem->task_lock = 0;
     sh_mem->taskpool = (struct pool)POOL_INITIALIZER_ARRAY(sh_mem->taskarray);
+    sh_mem->pipepool = (struct pool)POOL_INITIALIZER_ARRAY(sh_mem->pipearray);
     sh_mem->runq = NULL;
     sh_mem->waitq = NULL;
 

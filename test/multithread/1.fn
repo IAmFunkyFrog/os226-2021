@@ -37,8 +37,9 @@ END {
     r1 = pid1 / sum
     r2 = pid2 / sum
     r3 = pid3 / sum
-    print r1, r2, r3, r0
-    d = 0.05
+    print pid0, pid1, pid2, pid3
+    print r0, r1, r2, r3
+    d = 0.08
 	if (r0 < 0.25 - d || 0.25 + d < r0) {
 		ecode = 1
 	}

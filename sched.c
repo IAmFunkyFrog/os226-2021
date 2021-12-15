@@ -881,12 +881,8 @@ int main(int argc, char *argv[]) {
 	sigemptyset(&act.sa_mask);
 
     sh_mem = mmap(NULL, sizeof(struct shared_memory), PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_SHARED, -1, 0);
-    sh_mem->time = 0;
-    sh_mem->task_lock = 0;
     sh_mem->taskpool = (struct pool)POOL_INITIALIZER_ARRAY(sh_mem->taskarray);
     sh_mem->pipepool = (struct pool)POOL_INITIALIZER_ARRAY(sh_mem->pipearray);
-    sh_mem->runq = NULL;
-    sh_mem->waitq = NULL;
 
 	if (-1 == sigaction(SIGSEGV, &act, NULL)) {
 		perror("signal set failed");
